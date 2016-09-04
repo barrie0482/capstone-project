@@ -1,0 +1,317 @@
+---
+title: "Coursera Data Science Capstone Milestone Report"
+author: "Barrie Hill"
+date: "4 September 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Executive Summary
+The goal of the Capstone Project is to produce a data product that will take as input, a phrase (multiple words), in a text box input and then output the predicted next word.
+
+This Milestone Report describes the steps involved in loading and cleaning the data, and the exploratory analysis carried out the data from a [corpus](https://en.wikipedia.org/wiki/Text_corpus) sourced from [HC Corpora](www.corpora.heliohost.org). The [corpora](https://en.wikipedia.org/wiki/Text_corpus) are collected from publicly available sources by a [web crawler](https://en.wikipedia.org/wiki/Web_crawler). 
+
+This document will explain the main features of the data and the goals for the shiny application and the prediction alogorithm.
+
+Code used to create this report is not displayed in the report, but is available on [github](https://github.com/barrie0482/capstone-project).
+
+## Load Data
+```{r loadLibraries,echo=FALSE}
+library(ngram)
+suppressMessages(library(tm))
+suppressMessages(library(wordcloud))
+suppressMessages(library(ggplot2))
+require(RColorBrewer)
+library(knitr)
+library(scales)
+library(gridExtra)
+library(grid)
+suppressMessages(library(dplyr))
+```
+
+```{r displayLoadData,cache=TRUE,echo=FALSE}
+if(!file.exists("data/news.txt.rda") && !file.exists("data/blogs.txt.rda") && !file.exists("data/twitter.txt.rda")){
+news.txt <- readLines("data/final/en_US/en_US.news.txt")
+blogs.txt <- readLines("data/final/en_US/en_US.blogs.txt")
+twitter.txt <- suppressWarnings(readLines("data/final/en_US/en_US.twitter.txt"))
+save(news.txt,file="data/news.txt.rda")
+save(blogs.txt,file="data/blogs.txt.rda")
+save(twitter.txt,file="data/twitter.txt.rda")
+} else
+{
+  load("data/news.txt.rda")
+  load("data/blogs.txt.rda")
+  load("data/twitter.txt.rda")
+}
+load("data/swearwords.rda")
+swearwords <- tolower(swearwords)
+```
+For this project the English locale files were used. It is assumed that the project data files ([Coursera-SwiftKey.zip](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip)) have been downloaded and the English locale files extracted to the data directory. 
+
+The data files are large files containing samples of mainly english text written in various styles sourced from news stories, blogs and twitter updates. The original data is obtained from [HC Corpora](http://www.corpora.heliohost.org). 
+
+The raw data consists of rows of characters. Not all rows contain the same number of characters. There are non english characters, as well as many words that are considered offensive or profanity. A list of words classed as offensive or profanity has been created and is loaded to assist in the data cleaning stage. 
+
+The data was loaded using the **readLines** function, ready for the process of cleaning the data. 
+
+```{r dataFileSize,echo=FALSE,echo=FALSE}
+news.size <- file.info("data/final/en_US/en_US.news.txt")$size/1024000
+blogs.size <- file.info("data/final/en_US/en_US.blogs.txt")$size/1024000
+twitter.size <- file.info("data/final/en_US/en_US.twitter.txt")$size/1024000
+```
+
+```{r lineCounts,cache=TRUE,echo=FALSE}
+news.count <- wordcount(news.txt)
+blogs.count <- wordcount(blogs.txt)
+twitter.count <- wordcount(twitter.txt)
+news.lines <- length(news.txt)
+blogs.lines <- length(blogs.txt)
+twitter.lines <- length(twitter.txt)
+blogs.linecount <- as.data.frame(sapply(blogs.txt,nchar),stringsAsFactors = FALSE)
+news.linecount <- as.data.frame(sapply(news.txt,nchar),stringsAsFactors = FALSE)
+twitter.linecount <- as.data.frame(sapply(twitter.txt,nchar),stringsAsFactors = FALSE)
+blogs.chr.count.max <- max(blogs.linecount$`sapply(blogs.txt, nchar)`)
+news.chr.count.max <- max(news.linecount$`sapply(news.txt, nchar)`)
+twitter.chr.count.max <-max(twitter.linecount$`sapply(twitter.txt, nchar)`)
+blogs.chr.count.min <- min(blogs.linecount$`sapply(blogs.txt, nchar)`)
+news.chr.count.min <- min(news.linecount$`sapply(news.txt, nchar)`)
+twitter.chr.count.min <-min(twitter.linecount$`sapply(twitter.txt, nchar)`)
+FileName <- c("en_US.news.txt","en_US.blogs.txt","en_US.twitter.txt")
+FileSize <- c(round(news.size,2),round(blogs.size,2),round(twitter.size,2))
+WordCount <- c(news.count,blogs.count,twitter.count)
+NumLines <- c(news.lines,blogs.lines,twitter.lines)
+Max.Chr.per.Line <- c(news.chr.count.max,blogs.chr.count.max,twitter.chr.count.max)
+Min.Chr.per.Line <- c(news.chr.count.min,blogs.chr.count.min,twitter.chr.count.min)
+wtable <- data.frame(FileName,FileSize,WordCount,NumLines,Min.Chr.per.Line,Max.Chr.per.Line,stringsAsFactors = FALSE)
+names(wtable) <- c("File Name","File Size MB","Word Count","Line Count","Min Characters in Line","Max Characters in Line")
+```
+
+## Clean Data
+
+```{r processWords,cache=TRUE,echo=FALSE}
+if(!file.exists("data/news.clean.rda") && !file.exists("data/blogs.clean.rda") &&  !file.exists("data/twitter.clean.rda")){
+news <- concatenate(news.txt)
+blogs <- concatenate(blogs.txt)
+twitter <- concatenate(twitter.txt)
+news <- preprocess(news, case = "lower", remove.punct = TRUE,
+           remove.numbers = TRUE, fix.spacing = TRUE)
+blogs <- preprocess(blogs, case = "lower", remove.punct = TRUE,
+                   remove.numbers = TRUE, fix.spacing = TRUE)
+twitter <- preprocess(twitter, case = "lower", remove.punct = TRUE,
+                   remove.numbers = TRUE, fix.spacing = TRUE)
+save(news,file="data/news.clean.rda")
+save(blogs,file="data/blogs.clean.rda")
+save(twitter,file="data/twitter.clean.rda")
+} else
+{
+  load("data/news.clean.rda")
+  load("data/blogs.clean.rda")
+  load("data/twitter.clean.rda")
+}
+```
+Preprosessing is the cleaning of text data to get into a form that predictible results can be performed. Preprosessing text is called tokenisation. For this project, that aim is to build a model of one, two, three and four senquences of words called ngrams, extracted from the input texts. These sequences of words will be used to predict the next word the user will input. 
+
+Due to the size of the initial data set and the available system resources to process the data, it was decided to select a subset of the data to work with. Initially 10% of the data was selected, but the system resources were not sufficient to process this amount of data. A data set size of 1% was selected to use for this project.
+
+The data is cleaned by performing a number steps. 
+
+|Step                           | Tool Used                                        |
+|-----------------------------------|--------------------------------------------------|
+|Set all characters to lower case| **preprocess** function of the **ngram** package|
+|Punctuation and numbers are removed|**preprocess** function of the **ngram** package|
+|Leading, trailing and multiple white space is removed |**preprocess** function of the **ngram** package|
+|Removal of  **non-english** text and characters|process found on [Stack Overflow](http://stackoverflow.com/questions/18153504/removing-non-english-text-from-corpus-in-r-using-tm)|
+|Removal of offensive words and profanity|**removeWords** function of **tm** package|
+
+Removal of [stopwords](https://en.wikipedia.org/wiki/Stop_words) and [stemming](https://en.wikipedia.org/wiki/Stemming), another two preprocesses, were not performed in this project as they would possibly affect the accuaracy of the word search process.
+
+
+```{r removeNonAsciiChrs,cache=TRUE,echo=FALSE}
+# http://stackoverflow.com/questions/18153504/removing-non-english-text-from-corpus-in-r-using-tm
+# convert string to vector of words
+news <- unlist(strsplit(news, split=" "))
+blogs <- unlist(strsplit(blogs, split=" "))
+twitter <- unlist(strsplit(twitter, split=" "))
+# create a vector of non-ascii characters
+news.nonascii <- grep("tobyxxtoby", iconv(news, "latin1", "ASCII", sub="tobyxxtoby"))
+blogs.nonascii <- grep("tobyxxtoby", iconv(blogs, "latin1", "ASCII", sub="tobyxxtoby"))
+twitter.nonascii <- grep("tobyxxtoby", iconv(twitter, "latin1", "ASCII", sub="tobyxxtoby"))
+# remove non-ascii characters
+news <- news[-news.nonascii]
+blogs <- blogs[-blogs.nonascii]
+twitter <- twitter[-twitter.nonascii]
+# convert vector back to a string
+news <- paste(news, collapse = " ")
+blogs <- paste(blogs, collapse = " ")
+twitter <- paste(twitter, collapse = " ")
+```
+
+
+
+## Explore Data
+
+The initial exploration of the data occurred after the data was loaded, but prior to cleaning the data. The summary statisics of the English locale data sets identified by this exploration are shown in **Table 1**.
+
+```{r wtable,echo=FALSE,fig.width=9,fig.height=1}
+tt <- ttheme_default(core = list(fg_params=list(hjust = 1, x=1,cex = 0.75),
+                           bg_params=list(fill=c("lightgoldenrodyellow", "lightpink"))),
+                     colhead = list(fg_params=list(col="white",cex = 0.8),
+                          bg_params=list(fill="firebrick1",cex = 1.0)))
+grid.table(wtable, theme=tt,rows = NULL)
+```
+
+```{r plotFrequency,cache=TRUE,echo=FALSE}
+mywords <- c(news,blogs,twitter)
+mywords <- concatenate(mywords)
+myword.df <- unlist(strsplit(mywords, split=" "))
+myword.df <- as.data.frame(myword.df,stringsAsFactors = FALSE)
+mywords.table <- as.data.frame(sort(table(myword.df),decreasing = TRUE))
+```
+The most common words were [pronouns, prepositions and conjunctions](http://www.oxforddictionaries.com/words/word-classes-or-parts-of-speech#preposition). Other interesting features in the data were the many words that were not ascii characacters, foreign language, profanity and offensive words, as well as punctuation, unneeded white space and numbers. These features were not needed in the training set. Removal of these features formed the basis of the data cleaning.
+
+There are **`r sum(WordCount)`** words in the unprocessed data set. The top 12000 unprocessed words make up **`r round(((sum(mywords.table$Freq[1:12000])*100)/sum(WordCount)),2)`%** of the total words, with **`r round(((sum(mywords.table$Freq[1:50])*100)/sum(WordCount)),2)`%** in the top 50 words.
+
+```{r largePlot,cache=TRUE,echo=FALSE}
+names(mywords.table) <- c("Words","Frequency")
+mywords.plot <- mywords.table[1:50,]
+
+tt <- ttheme_default(core = list(fg_params=list(hjust = 1, x=1,cex = 0.8),
+                               bg_params=list(fill=c("lightgoldenrodyellow", "lightpink"))),
+                     # Change column header to white text and red background
+                     colhead = list(fg_params=list(col="white",cex = 1.0),
+                                bg_params=list(fill="firebrick1",cex = 1.0)))
+wf <- tableGrob(mywords.plot[1:10,], theme=tt,rows = NULL)
+gg <- ggplot(mywords.plot,aes(mywords.plot$Words,mywords.plot$Frequency)) + geom_bar(stat="identity",colour="red",fill="red") +
+       theme(axis.text.x = element_text(angle = 90, size = 6)) +
+       ggtitle("Frequency of Top 50 Unprocessed Words") + xlab("Words") + ylab("Frequency") +  
+       theme(plot.title = element_text(family = "Trebuchet MS", color="black", face="bold", size=10, hjust=1)) +
+       scale_y_continuous(labels = comma)
+grid.arrange(wf,gg,nrow=1,ncol=2,bottom=textGrob("Figure 1: Frequency Table and Frequency Plot of unprocessed words ",gp=gpar(fontsize=14,font=3)))
+```
+
+
+```{r createTrainingSet,cache=TRUE,echo=FALSE}
+# sample 1% of data
+set.seed(1234)
+news.txt <- news.txt[sample(length(news.txt),length(news.txt)*0.01)]
+blogs.txt <- blogs.txt[sample(length(blogs.txt),length(blogs.txt)*0.01)]
+twitter.txt <- twitter.txt[sample(length(twitter.txt),length(twitter.txt)*0.01)]
+
+news <- concatenate(news.txt)
+blogs <- concatenate(blogs.txt)
+twitter <- concatenate(twitter.txt)
+news <- preprocess(news, case = "lower", remove.punct = TRUE,
+           remove.numbers = TRUE, fix.spacing = TRUE)
+blogs <- preprocess(blogs, case = "lower", remove.punct = TRUE,
+                   remove.numbers = TRUE, fix.spacing = TRUE)
+twitter <- preprocess(twitter, case = "lower", remove.punct = TRUE,
+                   remove.numbers = TRUE, fix.spacing = TRUE)
+
+
+# http://stackoverflow.com/questions/18153504/removing-non-english-text-from-corpus-in-r-using-tm
+# convert string to vector of words
+news <- unlist(strsplit(news, split=" "))
+blogs <- unlist(strsplit(blogs, split=" "))
+twitter <- unlist(strsplit(twitter, split=" "))
+# create a vector of non-ascii characters
+news.nonascii <- grep("tobyxxtoby", iconv(news, "latin1", "ASCII", sub="tobyxxtoby"))
+blogs.nonascii <- grep("tobyxxtoby", iconv(blogs, "latin1", "ASCII", sub="tobyxxtoby"))
+twitter.nonascii <- grep("tobyxxtoby", iconv(twitter, "latin1", "ASCII", sub="tobyxxtoby"))
+# remove non-ascii characters
+news <- news[-news.nonascii]
+blogs <- blogs[-blogs.nonascii]
+twitter <- twitter[-twitter.nonascii]
+# convert vector back to a string
+news <- paste(news, collapse = " ")
+blogs <- paste(blogs, collapse = " ")
+twitter <- paste(twitter, collapse = " ")
+
+```
+
+
+```{r removeSwearwords, cache=TRUE,echo=FALSE}
+
+news <- removeWords(news,swearwords)
+blogs <- removeWords(blogs,swearwords)
+twitter <- removeWords(twitter,swearwords)
+mywords <- c(news,blogs,twitter)
+mywords <- concatenate(mywords)
+myword.df <- unlist(strsplit(mywords, split=" "))
+myword.df <- as.data.frame(myword.df,stringsAsFactors = FALSE)
+mywords.table <- as.data.frame(sort(table(myword.df),decreasing = TRUE))
+
+```
+
+After the data was cleaned and a tidy training set of 1% was created, there are **`r sum(mywords.table$Freq)`** words in the processed data set. The top 12000 processed words make up **`r round(((sum(mywords.table$Freq[1:10000])*100)/sum(mywords.table$Freq)),2)`%** of the total processed words, with **`r round(((sum(mywords.table$Freq[1:50])*100)/sum(mywords.table$Freq)),2)`%** in the top 50 processed words.
+
+The frequency tables and plots for the unprocessed data set (**Figure 1**) and the processed training set (**Figure 2**) show the distribution of words in the smaller training set is consistent with the larger unprocessed data set. 
+
+```{r smallPlot,cache=TRUE,echo=FALSE}
+names(mywords.table) <- c("Words","Frequency")
+mywords.plot <- mywords.table[1:50,]
+
+tt <- ttheme_default(core = list(fg_params=list(hjust = 1, x=1,cex = 0.8),
+                             bg_params=list(fill=c("lightgoldenrodyellow", "darkseagreen1"))),
+                     # Change column header to white text and red background
+                     colhead = list(fg_params=list(col="white",cex = 1.0),
+                             bg_params=list(fill="forestgreen",cex = 1.0)))
+wf <- tableGrob(mywords.plot[1:10,], theme=tt,rows = NULL)
+gg <- ggplot(mywords.plot,aes(mywords.plot$Words,mywords.plot$Frequency)) + geom_bar(stat="identity",colour="green",fill="green") +
+       theme(axis.text.x = element_text(angle = 90, size = 6)) +
+       ggtitle("Frequency of Top 50 Processed Words") + xlab("Words") + ylab("Frequency") +
+       theme(plot.title = element_text(family = "Trebuchet MS", color="black", face="bold", size=10, hjust=0)) +
+       scale_y_continuous(labels = comma)
+grid.arrange(wf,gg,nrow=1,ncol=2,bottom=textGrob("Figure 2: Frequency Table and Frequency Plot of processed words ",gp=gpar(fontsize=14,font=3)))
+
+```
+
+
+
+**Figure 3** shows top 10 ngrams created from the training data set. As expected the **unigrams** show the same top words and top frequencies as the **top 10 words** in the training set. The other **top 10 ngrams**, the **bigram**, **trigram** and the **4-gram**, show a mix of the **top 10 words** in each row.
+```{r ngrams,cache=TRUE,echo=FALSE}
+myngrams1 <- ngram(mywords,n = 1)
+myngrams2 <- ngram(mywords,n = 2)
+myngrams3 <- ngram(mywords,n = 3)
+myngrams4 <- ngram(mywords,n = 4)
+
+myngrams1.top10  <- get.phrasetable(myngrams1)[1:10,]
+myngrams2.top10  <- get.phrasetable(myngrams2)[1:10,]
+myngrams3.top10  <- get.phrasetable(myngrams3)[1:10,]
+myngrams4.top10  <- get.phrasetable(myngrams4)[1:10,]
+```
+
+```{r printNgrams,cache=TRUE,echo=FALSE,fig.width=9,fig.height=4}
+tt <- ttheme_default(core = list(fg_params=list(hjust = 1, x=1,cex = 0.8),
+                             bg_params=list(fill=c("lightgoldenrodyellow", "darkseagreen1"))),
+                     # Change column header to white text and red background
+                     colhead = list(fg_params=list(col="white",cex = 1.0),
+                             bg_params=list(fill="forestgreen",cex = 1.0)))
+names(myngrams1.top10) <- c("Unigrams","Frequency","Proportion")
+names(myngrams2.top10) <- c("Bigrams","Frequency","Proportion")
+names(myngrams3.top10) <- c("Trigrams","Frequency","Proportion")
+names(myngrams4.top10) <- c("4-grams","Frequency","Proportion")
+myngrams1.top10 <- select(myngrams1.top10,-Proportion)
+myngrams2.top10 <- select(myngrams2.top10,-Proportion)
+myngrams3.top10 <- select(myngrams3.top10,-Proportion)
+myngrams4.top10 <- select(myngrams4.top10,-Proportion)
+kb1 <- tableGrob(myngrams1.top10, theme=tt,rows = NULL)
+kb2 <- tableGrob(myngrams2.top10,theme=tt,rows = NULL)
+kb3 <- tableGrob(myngrams3.top10,theme=tt,rows = NULL)
+kb4 <- tableGrob(myngrams4.top10,theme=tt,rows = NULL)
+grid.arrange(kb1,kb2,kb3,kb4,nrow = 1,ncol = 4,bottom=textGrob("Figure 3: Top 10 ngrams created from the training set",gp=gpar(fontsize=14,font=3)))
+
+```
+
+
+
+## Next Steps
+
+The **ngram** package used to process and produce the data for the tables and plots in this report produces a phrase table with frequencies and proportions for each ngram in the training data set. It is proposed to use the training set of a 1% subset of the raw data as a model and to use these frequencies and proportions to predict the next word. If for instance a match is not found in the **4-gram**, a match in the **trigram** will be tested, then **bigram** and then to **unigram**.
+
+It is proposed that the shiny app will take a phrase entered into a text box, clean the phrase, perform the prediction and display a list of suggested next words.
+
+
